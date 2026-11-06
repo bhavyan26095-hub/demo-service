@@ -1,20 +1,23 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
 const signingKey = randomBytes(32);
 const users = new Map();
 
 export function addUser(username, password) {
-  users.set(username, password);
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(password, salt, 64).toString('hex');
+  users.set(username, { salt, hash });
 }
 
 export function login(username, password, now = Date.now()) {
-  const stored = users.get(username);
-  if (stored === undefined) {
+  const user = users.get(username);
+  if (!user) {
     return null;
   }
-  const a = Buffer.from(stored);
-  const b = Buffer.from(password);
+  const hash = scryptSync(password, user.salt, 64).toString('hex');
+  const a = Buffer.from(hash);
+  const b = Buffer.from(user.hash);
   if (a.length !== b.length || !timingSafeEqual(a, b)) {
     return null;
   }
@@ -26,14 +29,24 @@ export function verifyToken(token, now = Date.now()) {
     return null;
   }
   const [payload, signature] = token.split('.');
-  if (!payload || !signature || sign(payload) !== signature) {
+  if (!payload || !signature) {
     return null;
   }
-  const { sub, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-  if (typeof exp !== 'number' || now >= exp) {
+  const expectedSig = sign(payload);
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expectedSig);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
     return null;
   }
-  return sub;
+  try {
+    const { sub, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (typeof exp !== 'number' || now >= exp) {
+      return null;
+    }
+    return sub;
+  } catch {
+    return null;
+  }
 }
 
 function issueToken(username, now) {
@@ -43,4 +56,8 @@ function issueToken(username, now) {
 
 function sign(payload) {
   return createHmac('sha256', signingKey).update(payload).digest('base64url');
+}
+
+export function _resetForTests() {
+  users.clear();
 }
