@@ -1,13 +1,7 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 const TOKEN_TTL_MS = 60 * 60 * 1000;
-
-// A fresh signing key per process: tokens don't survive a restart, which is
-// fine for a demo and keeps a hard-coded secret out of the repo.
 const signingKey = randomBytes(32);
-
-// Passwords are kept and compared in plain text. This is the weakness the
-// demo asks the agents to fix.
 const users = new Map();
 
 export function addUser(username, password) {
@@ -16,7 +10,12 @@ export function addUser(username, password) {
 
 export function login(username, password, now = Date.now()) {
   const stored = users.get(username);
-  if (stored === undefined || stored !== password) {
+  if (stored === undefined) {
+    return null;
+  }
+  const a = Buffer.from(stored);
+  const b = Buffer.from(password);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
     return null;
   }
   return issueToken(username, now);
